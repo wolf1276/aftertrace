@@ -1,4 +1,4 @@
-# Aftertrace runtime runbook (Phase 1)
+# Runtime operations
 
 Local, authenticated, durable HydraDB for Aftertrace. The stack is `compose.yaml`
 and pins `ghcr.io/hydra-db/hydradb@sha256:ab71d651fefee13ebb23eb56d72316065bdca563ff7587442e07be663f2bf880`
@@ -7,9 +7,9 @@ for both `init-state` and `hydradb`.
 ## Prerequisites
 
 - Docker Engine with Compose v2.
-- Python 3.12+. From `aftertrace/`, create the virtualenv with
-  `python3 -m venv .venv`. Phase 1 uses only the standard library;
-  no extra packages are needed.
+- Python 3.12+. From the repository root, create the virtualenv with
+  `python3 -m venv .venv`. Runtime smoke checks use only the standard library;
+  fixture and context commands also need `pip install -r requirements.txt`.
 
 ## Configure the secret
 
@@ -17,7 +17,6 @@ Use the setup script. It creates `.env` with mode `0600`, a random 64-character
 hex token, and the local endpoint defaults, and it never displays the token:
 
 ```sh
-cd aftertrace
 .venv/bin/python scripts/setup_runtime.py
 ```
 
@@ -33,15 +32,17 @@ HYDRA_NAMESPACE=default
 ```
 
 `.env.example` contains placeholders only. Never commit `.env` or print the
-token. Changing `HYDRA_TOKEN` and restarting rewrites `/state/token`; existing
-graph data is kept.
+token. To rotate `HYDRA_TOKEN`, update the private `.env`, then run
+`docker compose up -d --force-recreate hydradb` and rerun the authenticated smoke
+check. A plain `restart` does not reload changed Compose environment variables.
+Existing graph data is kept in the named volume.
 
 ## Start
 
 ```sh
-cd aftertrace
 docker compose up -d
-until curl -fsS -o /dev/null http://127.0.0.1:19091/readyz; do sleep 1; done
+curl -fsS --max-time 2 --retry 20 --retry-delay 1 --retry-all-errors \
+  -o /dev/null http://127.0.0.1:19091/readyz
 curl -fsS http://127.0.0.1:18443/healthz
 ```
 
@@ -64,17 +65,17 @@ The endpoints are on different ports and are not interchangeable:
   Check the status code, not the body.
 - `GET http://127.0.0.1:19091/healthz` returns `404`; `/metrics` is admin-only.
 
-Query with the bearer token from the environment, never from a command line
-literal:
+A reachable health endpoint does not prove authenticated database access. Run:
 
 ```sh
-set -a; . ./.env; set +a
-curl -fsS -X POST http://127.0.0.1:18443/v1/graphs/default/query \
-  -H "Authorization: Bearer $HYDRA_TOKEN" \
-  -H "X-Graph-Namespace: ${HYDRA_NAMESPACE:-default}" \
-  -H 'Content-Type: application/json' \
-  --data '{"cell_id":"cell-0","query":"MATCH (a {id: 710001}) RETURN a.name AS name"}'
+.venv/bin/python scripts/runtime_smoke.py
 ```
+
+This loads credentials from the environment/private `.env`, performs real
+authenticated queries, and never passes the token as a shell argument.
+Avoid `docker compose config` without `--quiet`: rendered configuration includes
+expanded environment values. Docker administrators can inspect container secrets;
+loopback networking is not a defense against an untrusted local administrator.
 
 ## Named-volume persistence
 
@@ -117,7 +118,8 @@ type `PHASE1_PERSIST`, and marker `aftertrace-phase1-persistence`:
 ```sh
 .venv/bin/python scripts/runtime_smoke.py --write-persistence
 docker compose restart hydradb
-until curl -fsS -o /dev/null http://127.0.0.1:19091/readyz; do sleep 1; done
+curl -fsS --max-time 2 --retry 20 --retry-delay 1 --retry-all-errors \
+  -o /dev/null http://127.0.0.1:19091/readyz
 .venv/bin/python scripts/runtime_smoke.py --check-persistence
 .venv/bin/python scripts/runtime_smoke.py --cleanup-persistence
 ```
@@ -171,13 +173,10 @@ For any non-loopback deployment:
 
 ## Verification status
 
-The head agent's acceptance receipt (`docs/phase1-acceptance.md`) reports 17
-tests passing, a 301-row pagination scan, the authenticated smoke, and the
-persistence marker surviving a real `docker compose restart hydradb`. That
-restart run is not duplicated here.
+The [runtime acceptance receipt](phase1-acceptance.md) records authenticated
+write/read/delete, 301-row pagination, and persistence across an actual container
+restart. The [fixture/context acceptance receipt](phase23-acceptance.md) records
+the complete 41-test suite and actual graph ingestion.
 
-Re-run for this runbook: the default smoke returned `"ok": true` with all six
-checks passing (idempotent edges, exact `vertex_id`, list, null, property, and
-scratch cleanup). The `--write-persistence`, `--check-persistence`, and
-`--cleanup-persistence` modes were also exercised without a restart to validate
-their plumbing and marker-guarded cleanup.
+These are local single-node checks—not backup restoration, multi-node failover,
+production TLS, load testing, or a production-readiness certification.

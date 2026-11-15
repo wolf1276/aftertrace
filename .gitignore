@@ -2,5 +2,6 @@
 .env
 __pycache__/
 .pytest_cache/
+.agent-tasks/
 data/*
 !data/.gitkeep
