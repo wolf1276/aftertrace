@@ -1,0 +1,42 @@
+services:
+  init-state:
+    image: ghcr.io/hydra-db/hydradb@sha256:ab71d651fefee13ebb23eb56d72316065bdca563ff7587442e07be663f2bf880
+    user: "0:0"
+    entrypoint: /bin/sh
+    command: ["-ec", "mkdir -p /state/store /state/cache; chown -R 10001:10001 /state; chmod 700 /state"]
+    volumes:
+      - hydra-state:/state
+  hydradb:
+    depends_on:
+      init-state:
+        condition: service_completed_successfully
+    image: ghcr.io/hydra-db/hydradb@sha256:ab71d651fefee13ebb23eb56d72316065bdca563ff7587442e07be663f2bf880
+    entrypoint: /bin/sh
+    command: ["-ec", "umask 077; printf '%s' \"$$HYDRA_TOKEN\" > /state/token; exec /usr/local/bin/graph-node"]
+    environment:
+      HYDRA_TOKEN: ${HYDRA_TOKEN:?Set HYDRA_TOKEN in .env (at least 32 characters)}
+      CLOUD_PROVIDER: local
+      LOCAL_PATH: /state/store
+      GRAPH_NAMESPACE: default
+      GRAPH_ID: default
+      GRAPH_CELL_ID: cell-0
+      GRAPH_CELLS: cell-0
+      GRAPH_NODE_ID: node-0
+      GRAPH_DATA_PATH: data
+      GRAPH_AUTH_TOKEN_FILE: /state/token
+      GRAPH_ALLOW_PLAINTEXT: "true"
+      GRAPH_DATA_CACHE_DIR: /state/cache
+      GRAPH_DATA_CACHE_BYTES: "67108864"
+      GRAPH_BOLT_ADDR: 0.0.0.0:7687
+      GRAPH_ADVERTISED_BOLT_ADDR: 127.0.0.1:17687
+      GRAPH_BOLT_NODE_ADDRESSES: node-0=127.0.0.1:17687
+      GRAPH_HTTP_ADDR: 0.0.0.0:8443
+      GRAPH_ADMIN_ADDR: 0.0.0.0:9090
+      RUST_MIN_STACK: "33554432"
+    ports:
+      - "127.0.0.1:18443:8443"
+      - "127.0.0.1:19091:9090"
+    volumes:
+      - hydra-state:/state
+volumes:
+  hydra-state:
